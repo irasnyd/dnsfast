@@ -1,0 +1,156 @@
+#!/usr/bin/env python3
+
+import concurrent.futures
+import dns.exception
+import dns.resolver
+import argparse
+import time
+
+STATUSNAMES = {
+    0: 'NOERROR',
+    999: 'NXDOMAIN',
+    998: 'YXDOMAIN',
+    997: 'No Answer',
+    996: 'Timeout',
+}
+
+class StatusCollector(object):
+    def __init__(self, args):
+        self.args = args
+        self.statuses = {}
+        self.__clock_start = self.__clock_stop = time.time()
+
+    def add_result(self, statuscode):
+        try:
+            self.statuses[statuscode] += 1
+        except KeyError:
+            self.statuses[statuscode] = 1
+
+    def total_queries(self):
+        return sum(self.statuses.values())
+
+    def result(self):
+        result = []
+        for k, v in self.statuses.items():
+            name = STATUSNAMES.get(k, 'Unknown')
+            result.append('{}={}'.format(name, v))
+
+        return result
+
+    def clock_start(self):
+        self.__clock_start = time.time()
+
+    def clock_stop(self):
+        self.__clock_stop = time.time()
+
+    def clock_reset(self):
+        self.__clock_start = self.__clock_stop = time.time()
+
+    def clock_elapsed(self):
+        return self.__clock_stop - self.__clock_start
+
+    def clock_elapsed_immediate(self):
+        now = time.time()
+        return now - self.__clock_start
+
+def resolve_host(resolver, hostname, delay):
+    rcode = resolver.query(hostname).response.rcode()
+
+    if delay > 0:
+        time.sleep(delay / 1000.0)
+
+    return rcode
+
+def dictincrement(d, key):
+    try:
+        d[key] += 1
+    except KeyError:
+        d[key] = 1
+
+def runtest(args):
+    collector = StatusCollector(args)
+    futures = []
+
+    # configure the resolver library for a specific server, if requested
+    resolver = dns.resolver.Resolver(configure=True)
+    if args.server != '':
+        resolver.nameservers = [args.server, ]
+
+    print('Starting testing...')
+    print('Query Servers: {}'.format(' '.join(resolver.nameservers)))
+    print('Query Hostname: {}'.format(args.query))
+    print('Number of Queries: {}'.format(args.count))
+    print('Delay after each query: {} ms'.format(args.delay))
+    print('Number of concurrent workers: {}'.format(args.workers))
+    print('')
+
+    # start the clock
+    collector.clock_start()
+
+    # use a worker pool to query in parallel
+    with concurrent.futures.ThreadPoolExecutor(max_workers=args.workers) as executor:
+
+        # submit a bunch of requests
+        for i in range(args.count):
+            futures.append(executor.submit(resolve_host, resolver, args.query, args.delay))
+
+        # as they complete, tally them up
+        nprocessed = 0
+        for future in concurrent.futures.as_completed(futures):
+            try:
+                data = future.result()
+                collector.add_result(data)
+            except dns.resolver.NXDOMAIN:
+                collector.add_result(999)
+            except dns.resolver.YXDOMAIN:
+                collector.add_result(998)
+            except dns.resolver.NoAnswer:
+                collector.add_result(997)
+            except dns.exception.Timeout:
+                collector.add_result(996)
+            except KeyboardInterrupt as exc:
+                collector.clock_stop()
+                return collector
+            except Exception as exc:
+                print('Exception: {}'.format(str(exc)))
+
+            nprocessed += 1
+            if nprocessed % args.printevery == 0:
+                elapsed = collector.clock_elapsed_immediate()
+                qps = collector.total_queries() / elapsed
+                oneline = ' '.join(collector.result())
+                print('Processed {}/{} results ({:3.2f} s elapsed, {:3.2f} QPS) -> {}'.format(nprocessed, args.count, elapsed, qps, oneline))
+
+    collector.clock_stop()
+    return collector
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('-w', '--workers', type=int, default=5, help='Number of workers to run in parallel')
+    parser.add_argument('-q', '--query', type=str, default='configdb.lco.gtn', help='Hostname to query')
+    parser.add_argument('-c', '--count', type=int, default=10000, help='Number of queries to run')
+    parser.add_argument('-d', '--delay', type=int, default=0, help='Delay between each query (ms)')
+    parser.add_argument('-s', '--server', type=str, default='', help='Nameserver to query')
+    parser.add_argument('-p', '--printevery', type=int, default=1000, help='Print status updates every N queries')
+    args = parser.parse_args()
+
+    # run the test
+    collector = runtest(args)
+
+    # total up the number of queries run and queries per second
+    elapsed = collector.clock_elapsed()
+    queries = collector.total_queries()
+    qps = collector.total_queries() / elapsed
+
+    # print statistics
+    print('')
+    print('Elapsed time: {:3.2f} s Queries: {} QPS: {:3.2f}'.format(elapsed, queries, qps))
+
+    # print the count of each status code
+    for elem in collector.result():
+        print(elem)
+
+if __name__ == '__main__':
+    main()
+
+# vim: set ts=4 sts=4 sw=4 et tw=80:
