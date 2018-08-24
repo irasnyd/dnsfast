@@ -1,11 +1,10 @@
-Introduction
-============
+# Fast DNS Query Tool
 
-Fast DNS query tool. It can run multiple threads to query a single DNS server
-very quickly.
+A very fast DNS query tool. It can run multiple threads to query a single DNS
+server very quickly.
 
-Installation
-============
+
+## Installation
 
 Requires Python 3.5 or higher. Requires the `dnspython` library.
 
@@ -14,8 +13,7 @@ Requires Python 3.5 or higher. Requires the `dnspython` library.
     $ pip install --upgrade pip && pip install -r requirements.txt
     $ ./dnsfast --help
 
-Runtime Options
-===============
+## Runtime Options
 
 Please see `dnsfast --help`:
 
@@ -38,8 +36,7 @@ Please see `dnsfast --help`:
                             Print status updates every N queries
 
 
-Example Output
-==============
+## Example Output
 
     $ ./dnsfast -q configdb.lco.gtn -c 10000 -p 1000 -s 172.16.5.7
     Starting testing...
@@ -62,3 +59,8 @@ Example Output
     
     Elapsed time: 7.89 s Queries: 10000 QPS: 1267.64
     NOERROR=10000
+
+## License
+
+This project is licensed under the MIT License. Please refer to the
+[LICENSE](LICENSE) file in this repository for further information.
